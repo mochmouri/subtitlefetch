@@ -1,0 +1,18 @@
+# Never commit API keys or local config
+config.js
+config.json
+*.env
+.env.*
+
+# Files whose name contains "apikey" or "api_key" (case-insensitive)
+*apikey*
+*api_key*
+*APIKEY*
+*API_KEY*
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/

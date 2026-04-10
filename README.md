@@ -4,6 +4,8 @@ A Firefox-first browser extension that fetches Arabic subtitles from OpenSubtitl
 
 Subtitles sync in real time with the video. They pause when the video pauses, seek when you seek, and stay positioned over the video in fullscreen.
 
+> **Private repository.** This repo is private. The OpenSubtitles API key is stored locally in your browser's `storage.local` only — it is never written into the source code or committed to the repository.
+
 ---
 
 ## Getting an OpenSubtitles API key
@@ -12,7 +14,7 @@ Subtitles sync in real time with the video. They pause when the video pauses, se
 2. Go to your profile → API section → generate a consumer key
 3. Free tier: 5 subtitle downloads per day
 
-A default key is bundled in the extension. You can replace it via the settings cog in the popup.
+After installing, open the extension popup, click ⚙ Settings, and paste your API key. It is saved to browser storage on your device only — it never leaves the browser and is not present in any source file.
 
 ---
 

@@ -3,7 +3,6 @@
 
 const browserAPI = typeof browser !== 'undefined' ? browser : chrome;
 
-const DEFAULT_API_KEY = '2lqB8Lx34EEBfcwNBJmrhIY262fpEZM3';
 const API_BASE = 'https://api.opensubtitles.com/api/v1';
 const USER_AGENT = 'ArabicSubtitleOverlay v1.0';
 
@@ -12,7 +11,7 @@ const USER_AGENT = 'ArabicSubtitleOverlay v1.0';
 function getApiKey() {
   return new Promise(resolve => {
     browserAPI.storage.local.get('osApiKey', result => {
-      resolve(result.osApiKey || DEFAULT_API_KEY);
+      resolve(result.osApiKey || '');
     });
   });
 }
@@ -32,6 +31,9 @@ async function apiHeaders() {
  * Returns the raw `data` array from the API response.
  */
 async function searchSubtitles(query) {
+  const key = await getApiKey();
+  if (!key) throw new Error('No API key set. Click ⚙ Settings to add your OpenSubtitles key.');
+
   const params = new URLSearchParams({
     query,
     languages: 'ar',
@@ -58,6 +60,9 @@ async function searchSubtitles(query) {
  * Returns { content, fileName, remaining, message }.
  */
 async function downloadSubtitle(fileId) {
+  const key = await getApiKey();
+  if (!key) throw new Error('No API key set. Click ⚙ Settings to add your OpenSubtitles key.');
+
   const res = await fetch(`${API_BASE}/download`, {
     method: 'POST',
     headers: await apiHeaders(),
@@ -92,6 +97,42 @@ async function downloadSubtitle(fileId) {
   };
 }
 
+// ── History ───────────────────────────────────────────────────────────────────
+
+const HISTORY_KEY    = 'subHistory';
+const HISTORY_DAYS   = 7;
+const HISTORY_MAX_MS = HISTORY_DAYS * 24 * 60 * 60 * 1000;
+
+function pruneHistory(entries) {
+  const cutoff = Date.now() - HISTORY_MAX_MS;
+  return entries.filter(e => e.timestamp >= cutoff);
+}
+
+function getHistory() {
+  return new Promise(resolve => {
+    browserAPI.storage.local.get(HISTORY_KEY, result => {
+      resolve(pruneHistory(result[HISTORY_KEY] || []));
+    });
+  });
+}
+
+function saveHistoryEntry(entry) {
+  return new Promise(resolve => {
+    browserAPI.storage.local.get(HISTORY_KEY, result => {
+      const existing = pruneHistory(result[HISTORY_KEY] || []);
+      // Deduplicate: remove any existing entry for the same fileName
+      const filtered = existing.filter(e => e.fileName !== entry.fileName);
+      const updated  = [entry, ...filtered].slice(0, 50); // cap at 50 entries
+      browserAPI.storage.local.set({ [HISTORY_KEY]: updated }, resolve);
+    });
+  });
+}
+
+// Prune stale entries on background load
+getHistory().then(clean => {
+  browserAPI.storage.local.set({ [HISTORY_KEY]: clean });
+});
+
 // ── Message handler ───────────────────────────────────────────────────────────
 
 browserAPI.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -116,6 +157,18 @@ browserAPI.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       browserAPI.storage.local.set({ osApiKey: message.apiKey }, () => {
         sendResponse({ ok: true });
       });
+      return true;
+
+    case 'saveHistoryEntry':
+      saveHistoryEntry(message.entry)
+        .then(() => sendResponse({ ok: true }))
+        .catch(err => sendResponse({ ok: false, error: err.message }));
+      return true;
+
+    case 'getHistory':
+      getHistory()
+        .then(entries => sendResponse({ ok: true, entries }))
+        .catch(err => sendResponse({ ok: false, error: err.message }));
       return true;
   }
 });

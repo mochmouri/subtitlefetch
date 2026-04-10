@@ -20,12 +20,44 @@ const loadedName        = document.getElementById('loaded-name');
 const removeBtn         = document.getElementById('remove-btn');
 const offsetSlider      = document.getElementById('offset-slider');
 const offsetDisplay     = document.getElementById('offset-display');
+
+// Header buttons
+const historyBtn        = document.getElementById('history-btn');
 const settingsBtn       = document.getElementById('settings-btn');
+
+// Views
 const mainView          = document.getElementById('main-view');
+const historyView       = document.getElementById('history-view');
 const settingsView      = document.getElementById('settings-view');
+
+// History view
+const historyList       = document.getElementById('history-list');
+const historyEmpty      = document.getElementById('history-empty');
+const closeHistoryBtn   = document.getElementById('close-history-btn');
+
+// Settings — API key
 const apiKeyInput       = document.getElementById('api-key-input');
 const saveKeyBtn        = document.getElementById('save-key-btn');
 const cancelSettingsBtn = document.getElementById('cancel-settings-btn');
+
+// Settings — appearance
+const fontSizeInput     = document.getElementById('font-size-input');
+const fontSizeDisplay   = document.getElementById('font-size-display');
+const textColorInput    = document.getElementById('text-color-input');
+const bgOpacityInput    = document.getElementById('bg-opacity-input');
+const bgOpacityDisplay  = document.getElementById('bg-opacity-display');
+const fontFamilyInput   = document.getElementById('font-family-input');
+const textShadowInput   = document.getElementById('text-shadow-input');
+
+// ── Default appearance ─────────────────────────────────────────────────────────
+
+const DEFAULT_APPEARANCE = {
+  fontSize:   24,
+  textColor:  '#ffffff',
+  bgOpacity:  60,
+  fontFamily: 'system',
+  textShadow: false,
+};
 
 // ── Messaging helpers ──────────────────────────────────────────────────────────
 
@@ -65,17 +97,13 @@ function formatOffset(val) {
   return `${sign}${val.toFixed(1)} s`;
 }
 
-/**
- * Strip site-name suffixes from a tab title to get a clean search query.
- * e.g. "Inception | Netflix" → "Inception"
- */
 function cleanTitle(title) {
   return title
     .replace(
       /\s*[|\-–—]\s*(Netflix|YouTube|Disney\+|Hulu|Prime Video|Amazon Prime Video|Shahid|OSN|Watch Online|Stream|Full Episode|HD|4K|S\d+\s*E\d+|Season \d+|Episode \d+).*$/i,
       ''
     )
-    .replace(/\s*\(?\d{4}\)?$/, '')  // trailing year
+    .replace(/\s*\(?\d{4}\)?$/, '')
     .trim();
 }
 
@@ -85,6 +113,18 @@ function escapeHtml(s) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function showView(view) {
+  mainView.hidden    = view !== 'main';
+  historyView.hidden = view !== 'history';
+  settingsView.hidden = view !== 'settings';
+}
+
+function formatTimestamp(ts) {
+  const d = new Date(ts);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
 // ── Search ─────────────────────────────────────────────────────────────────────
@@ -129,6 +169,8 @@ function renderResults(results) {
     const release  = attrs.release || '';
     const downloads = attrs.download_count ?? 0;
     const fileId   = attrs.files?.[0]?.file_id;
+    const fileName = attrs.files?.[0]?.file_name || 'subtitle.srt';
+    const url      = attrs.url || '';
 
     if (!fileId) continue;
 
@@ -137,7 +179,7 @@ function renderResults(results) {
       <div class="result-title">${escapeHtml(title)}${year ? ` (${year})` : ''}</div>
       <div class="result-meta">${escapeHtml(release.slice(0, 60)) || '—'} &middot; ${downloads.toLocaleString()} dl</div>
     `;
-    li.addEventListener('click', () => loadSubtitle(fileId, title));
+    li.addEventListener('click', () => loadSubtitle(fileId, title, fileName, url));
     resultsList.appendChild(li);
   }
 
@@ -146,50 +188,29 @@ function renderResults(results) {
 
 // ── Load subtitle ──────────────────────────────────────────────────────────────
 
-async function loadSubtitle(fileId, title) {
+async function loadSubtitle(fileId, title, fileName, sourceUrl) {
   setStatus('Downloading subtitle…');
   resultsSection.hidden = true;
   searchBtn.disabled = true;
 
   try {
-    // 1. Ask background to download the file
     const dlRes = await sendToBackground({ action: 'downloadSubtitle', fileId });
     if (!dlRes.ok) throw new Error(dlRes.error);
 
-    // 2. Parse the SRT content in popup (no need to pass raw text to content script)
-    const cues = parseSRT(dlRes.content);
-    if (!cues.length) {
-      throw new Error('Could not parse subtitle file — possibly not SRT format.');
-    }
+    await applySubtitleContent(dlRes.content, title, dlRes.fileName || fileName);
 
-    setStatus(`Parsed ${cues.length} cues. Loading…`);
-
-    // 3. Send cues to the content script
-    let contentRes;
-    try {
-      contentRes = await sendToContent({
-        action: 'loadSubtitles',
-        cues,
-        offset: currentOffset,
-      });
-    } catch (err) {
-      // Content script may not be alive yet on this tab — try injecting it first
-      await injectContentScript();
-      contentRes = await sendToContent({
-        action: 'loadSubtitles',
-        cues,
-        offset: currentOffset,
-      });
-    }
-
-    if (!contentRes?.ok) {
-      throw new Error(contentRes?.error || 'Content script did not respond.');
-    }
-
-    // 4. Update UI to loaded state
-    subtitlesLoaded = true;
-    loadedName.textContent = `${title} — ${cues.length} cues`;
-    loadedSection.hidden = false;
+    // Save to history
+    sendToBackground({
+      action: 'saveHistoryEntry',
+      entry: {
+        title,
+        fileName:   dlRes.fileName || fileName,
+        language:   'ar',
+        sourceUrl:  sourceUrl || '',
+        timestamp:  Date.now(),
+        content:    dlRes.content,   // stored for re-apply without re-downloading
+      },
+    }).catch(() => {});
 
     const note = dlRes.remaining != null
       ? `Loaded. ${dlRes.remaining} downloads remaining today.`
@@ -204,7 +225,43 @@ async function loadSubtitle(fileId, title) {
   }
 }
 
-/** Programmatically inject content script for pages not already covered. */
+/**
+ * Parse and send subtitle content to the content script.
+ * Used by both fresh downloads and history re-apply.
+ */
+async function applySubtitleContent(srtContent, title, fileName) {
+  const cues = parseSRT(srtContent);
+  if (!cues.length) {
+    throw new Error('Could not parse subtitle file — possibly not SRT format.');
+  }
+
+  setStatus(`Parsed ${cues.length} cues. Loading…`);
+
+  let contentRes;
+  try {
+    contentRes = await sendToContent({
+      action: 'loadSubtitles',
+      cues,
+      offset: currentOffset,
+    });
+  } catch (_) {
+    await injectContentScript();
+    contentRes = await sendToContent({
+      action: 'loadSubtitles',
+      cues,
+      offset: currentOffset,
+    });
+  }
+
+  if (!contentRes?.ok) {
+    throw new Error(contentRes?.error || 'Content script did not respond.');
+  }
+
+  subtitlesLoaded = true;
+  loadedName.textContent = `${title} — ${cues.length} cues`;
+  loadedSection.hidden = false;
+}
+
 async function injectContentScript() {
   await new Promise((resolve, reject) => {
     browserAPI.tabs.executeScript(activeTabId, { file: 'content/content.js' }, () => {
@@ -218,7 +275,6 @@ async function injectContentScript() {
       else resolve();
     });
   });
-  // Small pause to let the script initialise
   await new Promise(r => setTimeout(r, 150));
 }
 
@@ -238,7 +294,6 @@ async function removeSubtitles() {
 function onOffsetChange() {
   currentOffset = parseFloat(offsetSlider.value);
   offsetDisplay.textContent = formatOffset(currentOffset);
-
   browserAPI.storage.local.set({ subtitleOffset: currentOffset });
 
   if (subtitlesLoaded) {
@@ -246,41 +301,111 @@ function onOffsetChange() {
   }
 }
 
+// ── History ────────────────────────────────────────────────────────────────────
+
+async function showHistory() {
+  showView('history');
+  historyList.innerHTML = '';
+
+  const res = await sendToBackground({ action: 'getHistory' });
+  const entries = (res.ok && res.entries) ? res.entries : [];
+
+  if (!entries.length) {
+    historyEmpty.hidden = false;
+    historyList.hidden  = true;
+    return;
+  }
+
+  historyEmpty.hidden = true;
+  historyList.hidden  = false;
+
+  for (const entry of entries) {
+    const li = document.createElement('li');
+    li.className = 'history-item';
+    li.innerHTML = `
+      <div class="history-item-top">
+        <span class="history-title">${escapeHtml(entry.title)}</span>
+        <button class="history-reapply">Re-apply</button>
+      </div>
+      <div class="history-meta">${escapeHtml(entry.fileName)} &middot; ${formatTimestamp(entry.timestamp)}</div>
+    `;
+    li.querySelector('.history-reapply').addEventListener('click', async () => {
+      showView('main');
+      setStatus('Re-applying…');
+      try {
+        await applySubtitleContent(entry.content, entry.title, entry.fileName);
+        setStatus('Re-applied from history.');
+      } catch (err) {
+        setStatus(`Error: ${err.message}`, true);
+      }
+    });
+    historyList.appendChild(li);
+  }
+}
+
+// ── Appearance settings ────────────────────────────────────────────────────────
+
+async function loadAppearanceControls() {
+  await new Promise(resolve => {
+    browserAPI.storage.local.get('subAppearance', result => {
+      const a = Object.assign({}, DEFAULT_APPEARANCE, result.subAppearance || {});
+      fontSizeInput.value    = a.fontSize;
+      fontSizeDisplay.textContent = `${a.fontSize}px`;
+      textColorInput.value   = a.textColor;
+      bgOpacityInput.value   = a.bgOpacity;
+      bgOpacityDisplay.textContent = `${a.bgOpacity}%`;
+      fontFamilyInput.value  = a.fontFamily;
+      textShadowInput.checked = a.textShadow;
+      resolve();
+    });
+  });
+}
+
+function readAppearanceControls() {
+  return {
+    fontSize:   parseInt(fontSizeInput.value, 10),
+    textColor:  textColorInput.value,
+    bgOpacity:  parseInt(bgOpacityInput.value, 10),
+    fontFamily: fontFamilyInput.value,
+    textShadow: textShadowInput.checked,
+  };
+}
+
+function onAppearanceChange() {
+  fontSizeDisplay.textContent  = `${fontSizeInput.value}px`;
+  bgOpacityDisplay.textContent = `${bgOpacityInput.value}%`;
+  const appearance = readAppearanceControls();
+  browserAPI.storage.local.set({ subAppearance: appearance });
+  // Content script picks up the change via storage.onChanged — no explicit message needed.
+}
+
 // ── Settings ───────────────────────────────────────────────────────────────────
 
 async function showSettings() {
   const res = await sendToBackground({ action: 'getApiKey' });
   apiKeyInput.value = res.apiKey || '';
-  mainView.hidden    = true;
-  settingsView.hidden = false;
-}
-
-function hideSettings() {
-  mainView.hidden     = false;
-  settingsView.hidden = true;
+  await loadAppearanceControls();
+  showView('settings');
 }
 
 async function saveApiKey() {
   const key = apiKeyInput.value.trim();
   if (!key) return;
   await sendToBackground({ action: 'setApiKey', apiKey: key });
-  hideSettings();
+  showView('main');
   setStatus('API key saved.');
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 
 async function init() {
-  // Resolve active tab
   const [tab] = await browserAPI.tabs.query({ active: true, currentWindow: true });
   activeTabId = tab.id;
 
-  // Pre-fill search from page title
   if (tab.title) {
     searchInput.value = cleanTitle(tab.title);
   }
 
-  // Restore saved offset
   await new Promise(resolve => {
     browserAPI.storage.local.get('subtitleOffset', result => {
       if (result.subtitleOffset != null) {
@@ -292,12 +417,9 @@ async function init() {
     });
   });
 
-  // Quick ping to check content script is alive on this tab
   try {
     await sendToContent({ action: 'ping' });
-  } catch (_) {
-    // Not an error — script will be injected on-demand when subtitles are loaded
-  }
+  } catch (_) {}
 }
 
 // ── Event listeners ────────────────────────────────────────────────────────────
@@ -306,13 +428,21 @@ searchBtn.addEventListener('click', doSearch);
 searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
 
 removeBtn.addEventListener('click', removeSubtitles);
-
 offsetSlider.addEventListener('input', onOffsetChange);
 
+historyBtn.addEventListener('click', showHistory);
+closeHistoryBtn.addEventListener('click', () => showView('main'));
+
 settingsBtn.addEventListener('click', showSettings);
-cancelSettingsBtn.addEventListener('click', hideSettings);
+cancelSettingsBtn.addEventListener('click', () => showView('main'));
 saveKeyBtn.addEventListener('click', saveApiKey);
 apiKeyInput.addEventListener('keydown', e => { if (e.key === 'Enter') saveApiKey(); });
+
+fontSizeInput.addEventListener('input', onAppearanceChange);
+textColorInput.addEventListener('input', onAppearanceChange);
+bgOpacityInput.addEventListener('input', onAppearanceChange);
+fontFamilyInput.addEventListener('change', onAppearanceChange);
+textShadowInput.addEventListener('change', onAppearanceChange);
 
 // Kick off
 init().catch(err => setStatus(`Init error: ${err.message}`, true));

@@ -20,6 +20,59 @@
   let resizeObserver = null;
   let lastText = null;    // tracks last rendered text to avoid redundant DOM writes
 
+  // ── Appearance ─────────────────────────────────────────────────────────────
+
+  const DEFAULT_APPEARANCE = {
+    fontSize:   24,
+    textColor:  '#ffffff',
+    bgOpacity:  60,
+    fontFamily: 'system',
+    textShadow: false,
+  };
+
+  let appearance = Object.assign({}, DEFAULT_APPEARANCE);
+
+  const FONT_FAMILY_MAP = {
+    system:        "'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif",
+    Arial:         'Arial, sans-serif',
+    Georgia:       'Georgia, serif',
+    'Courier New': "'Courier New', Courier, monospace",
+    Verdana:       'Verdana, sans-serif',
+  };
+
+  function hexToRgb(hex) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `${r}, ${g}, ${b}`;
+  }
+
+  function applyAppearanceToSpan(span) {
+    const fontFamily = FONT_FAMILY_MAP[appearance.fontFamily] || FONT_FAMILY_MAP.system;
+    const bgAlpha    = (appearance.bgOpacity / 100).toFixed(2);
+    const rgb        = hexToRgb(appearance.textColor || '#ffffff');
+    const shadow     = appearance.textShadow
+      ? '1px 1px 3px rgba(0,0,0,0.9), -1px -1px 3px rgba(0,0,0,0.9)'
+      : 'none';
+
+    // Use setProperty with 'important' priority to beat the stylesheet's !important rules.
+    span.style.setProperty('font-size',   `${appearance.fontSize}px`, 'important');
+    span.style.setProperty('color',       `rgb(${rgb})`,              'important');
+    span.style.setProperty('background',  `rgba(0,0,0,${bgAlpha})`,   'important');
+    span.style.setProperty('font-family', fontFamily,                 'important');
+    span.style.setProperty('text-shadow', shadow,                     'important');
+  }
+
+  function loadAppearance() {
+    browserAPI.storage.local.get('subAppearance', result => {
+      if (result.subAppearance) {
+        appearance = Object.assign({}, DEFAULT_APPEARANCE, result.subAppearance);
+      }
+      // Invalidate last rendered text so next frame re-renders with new styles
+      lastText = null;
+    });
+  }
+
   // ── Overlay ────────────────────────────────────────────────────────────────
 
   function createOverlay() {
@@ -32,7 +85,6 @@
 
   function setOverlayPosition(insideFullscreen) {
     if (!overlay) return;
-    // Position and dimensions are set inline so site CSS cannot interfere.
     overlay.style.cssText = [
       `position: ${insideFullscreen ? 'absolute' : 'fixed'}`,
       'pointer-events: none',
@@ -105,12 +157,12 @@
     overlay.innerHTML = '';
     if (!text) return;
 
-    // Render each line as a separate span so each gets its own background box.
     text.split('\n').forEach(line => {
       if (!line.trim()) return;
       const span = document.createElement('span');
       span.className = 'arabic-sub-line';
-      span.textContent = line;   // textContent is safe — no HTML interpretation
+      span.textContent = line;
+      applyAppearanceToSpan(span);
       overlay.appendChild(span);
     });
   }
@@ -155,16 +207,23 @@
     const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
 
     if (fsEl && fsEl.contains(videoEl)) {
-      // Move overlay inside the fullscreen element so it renders above it.
       setOverlayPosition(true);
       fsEl.appendChild(overlay);
     } else {
-      // Return overlay to document.body.
       setOverlayPosition(false);
       document.body.appendChild(overlay);
     }
     updateOverlayRect();
   }
+
+  // ── Storage listener (appearance changes) ─────────────────────────────────
+
+  browserAPI.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.subAppearance) {
+      appearance = Object.assign({}, DEFAULT_APPEARANCE, changes.subAppearance.newValue || {});
+      lastText = null; // force re-render on next RAF tick
+    }
+  });
 
   // ── Message listener ───────────────────────────────────────────────────────
 
@@ -197,7 +256,7 @@
 
       case 'setOffset':
         offset   = message.offset;
-        lastText = null; // force re-render on next frame
+        lastText = null;
         sendResponse({ ok: true });
         return true;
 
@@ -209,11 +268,11 @@
     }
   });
 
-  // ── Passive video pre-detection ────────────────────────────────────────────
-  // Detect the video early so attach() is instant when subtitles are loaded.
+  // ── Boot ───────────────────────────────────────────────────────────────────
+
+  loadAppearance();
   videoEl = findLargestVideo();
 
-  // Re-check after a delay for SPAs that load content after document_idle.
   setTimeout(() => {
     if (!videoEl) videoEl = findLargestVideo();
   }, 2500);
