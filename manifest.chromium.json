@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "Arabic Subtitle Overlay",
+  "version": "1.0",
+  "description": "Fetch and overlay Arabic subtitles on streaming video from OpenSubtitles.",
+
+  "permissions": [
+    "activeTab",
+    "storage",
+    "tabs",
+    "scripting"
+  ],
+
+  "host_permissions": ["<all_urls>"],
+
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Arabic Subtitles",
+    "default_icon": {
+      "48": "icons/icon.svg"
+    }
+  },
+
+  "background": {
+    "service_worker": "background/background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/content.js"],
+      "css": ["content/overlay.css"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+
+  "web_accessible_resources": [
+    {
+      "resources": ["content/overlay.css"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
