@@ -20,6 +20,8 @@ const loadedName        = document.getElementById('loaded-name');
 const removeBtn         = document.getElementById('remove-btn');
 const offsetSlider      = document.getElementById('offset-slider');
 const offsetDisplay     = document.getElementById('offset-display');
+const localFileInput    = document.getElementById('local-file-input');
+const uploadLabel       = document.getElementById('upload-label');
 
 // Header buttons
 const historyBtn        = document.getElementById('history-btn');
@@ -197,9 +199,7 @@ async function loadSubtitle(fileId, title, fileName, sourceUrl) {
     const dlRes = await sendToBackground({ action: 'downloadSubtitle', fileId });
     if (!dlRes.ok) throw new Error(dlRes.error);
 
-    await applySubtitleContent(dlRes.content, title, dlRes.fileName || fileName);
-
-    // Save to history
+    // Save to history immediately after download, regardless of whether apply succeeds
     sendToBackground({
       action: 'saveHistoryEntry',
       entry: {
@@ -208,9 +208,11 @@ async function loadSubtitle(fileId, title, fileName, sourceUrl) {
         language:   'ar',
         sourceUrl:  sourceUrl || '',
         timestamp:  Date.now(),
-        content:    dlRes.content,   // stored for re-apply without re-downloading
+        content:    dlRes.content,
       },
     }).catch(() => {});
+
+    await applySubtitleContent(dlRes.content, title, dlRes.fileName || fileName);
 
     const note = dlRes.remaining != null
       ? `Loaded. ${dlRes.remaining} downloads remaining today.`
@@ -396,6 +398,37 @@ async function saveApiKey() {
   setStatus('API key saved.');
 }
 
+// ── Local file upload ──────────────────────────────────────────────────────────
+
+function handleLocalFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async e => {
+    const content = e.target.result;
+    const title   = file.name.replace(/\.[^.]+$/, '');
+    setStatus('Loading local file…');
+    resultsSection.hidden = true;
+    try {
+      await applySubtitleContent(content, title, file.name);
+      sendToBackground({
+        action: 'saveHistoryEntry',
+        entry: {
+          title,
+          fileName:  file.name,
+          language:  'ar',
+          sourceUrl: '',
+          timestamp: Date.now(),
+          content,
+        },
+      }).catch(() => {});
+      setStatus('Loaded from local file.');
+    } catch (err) {
+      setStatus(`Error: ${err.message}`, true);
+    }
+  };
+  reader.readAsText(file);
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────────
 
 async function init() {
@@ -426,6 +459,9 @@ async function init() {
 
 searchBtn.addEventListener('click', doSearch);
 searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+
+uploadLabel.addEventListener('click', () => localFileInput.click());
+localFileInput.addEventListener('change', () => handleLocalFile(localFileInput.files[0]));
 
 removeBtn.addEventListener('click', removeSubtitles);
 offsetSlider.addEventListener('input', onOffsetChange);

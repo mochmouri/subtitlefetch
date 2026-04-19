@@ -192,6 +192,31 @@ button:disabled {
   border-color: #aaa;
 }
 
+/* ── Local upload ───────────────────────────────────────────────────────────── */
+
+#upload-row {
+  margin-top: 8px;
+}
+
+#upload-label {
+  display: inline-block;
+  padding: 0 10px;
+  height: 25px;
+  line-height: 25px;
+  font-size: 11px;
+  color: #4466aa;
+  border: 1px dashed #99aad0;
+  background: #f0f4ff;
+  cursor: pointer;
+  user-select: none;
+}
+
+#upload-label:hover {
+  background: #e0eaff;
+  border-color: #5580c0;
+  color: #2244aa;
+}
+
 /* ── Offset slider ──────────────────────────────────────────────────────────── */
 
 #offset-section {
@@ -218,6 +243,13 @@ input[type="range"] {
   width: 100%;
   cursor: pointer;
   accent-color: #5580c0;
+}
+
+#offset-hint {
+  margin-top: 4px;
+  font-size: 10px;
+  color: #888;
+  letter-spacing: 0.01em;
 }
 
 /* ── Shared view chrome (history + settings) ────────────────────────────────── */
@@ -358,6 +390,18 @@ input[type="range"] {
   background: #fff;
   cursor: pointer;
   border-radius: 0;
+}
+
+#api-key-link {
+  display: inline-block;
+  margin-top: 5px;
+  font-size: 11px;
+  color: #5580c0;
+  text-decoration: none;
+}
+
+#api-key-link:hover {
+  text-decoration: underline;
 }
 
 .settings-checkbox-label {
